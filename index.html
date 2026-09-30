@@ -2897,7 +2897,37 @@ buildManifesto("WITH GREAT CODE COMES GREAT IMPACT", [2, 5]);
   const status = document.getElementById("pinStatus");
   const wall = document.getElementById("pinwall");
   if (!grid) return;
+  const USER = "Toufikmahata20";
+  const FEED = "https://www.pinterest.com/" + USER + "/feed.rss";
   let last = "";
+
+  const big = (u) => (u || "").replace(/\/(60x60|170x|236x|474x)\//, "/736x/");
+
+  function parseRss(xml) {
+    const doc = new DOMParser().parseFromString(xml, "text/xml");
+    return [...doc.querySelectorAll("item")].map((it) => {
+      const q = (n) => (it.querySelector(n) ? it.querySelector(n).textContent.trim() : "");
+      const desc = q("description");
+      const img = (desc.match(/<img[^>]+src=["']([^"']+)["']/i) || [])[1] || "";
+      const text = desc.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      const link = q("link");
+      return { id: link || img, link, title: (q("title") || text).slice(0, 90), image: big(img) };
+    });
+  }
+
+  // 1) our own server function  2) public CORS proxies, in case /api isn't deployed or is blocked
+  const sources = [
+    async () => { const r = await fetch("/api/pinterest", { cache: "no-store" }); if (!r.ok) throw 0; return (await r.json()).pins; },
+    async () => { const r = await fetch("https://api.allorigins.win/raw?url=" + encodeURIComponent(FEED)); if (!r.ok) throw 0; return parseRss(await r.text()); },
+    async () => {
+      const r = await fetch("https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(FEED)); if (!r.ok) throw 0;
+      const d = await r.json();
+      return (d.items || []).map((i) => {
+        const img = i.thumbnail || ((i.description || "").match(/<img[^>]+src=["']([^"']+)["']/i) || [])[1] || "";
+        return { id: i.link, link: i.link, title: (i.title || "").slice(0, 90), image: big(img) };
+      });
+    },
+  ];
 
   function render(pins) {
     grid.textContent = "";
@@ -2908,6 +2938,7 @@ buildManifesto("WITH GREAT CODE COMES GREAT IMPACT", [2, 5]);
       a.href = p.link; a.target = "_blank"; a.rel = "noopener";
       const img = document.createElement("img");
       img.src = p.image; img.alt = p.title || "Pinterest pin"; img.loading = "lazy";
+      img.referrerPolicy = "no-referrer";
       img.addEventListener("load", () => window.ScrollTrigger && ScrollTrigger.refresh());
       a.appendChild(img);
       fig.appendChild(a);
@@ -2919,20 +2950,20 @@ buildManifesto("WITH GREAT CODE COMES GREAT IMPACT", [2, 5]);
   }
 
   async function load() {
-    try {
-      const r = await fetch("/api/pinterest", { cache: "no-store" });
-      if (!r.ok) throw new Error("bad status");
-      const d = await r.json();
-      if (!d.pins || !d.pins.length) throw new Error("no pins");
-      wall.classList.remove("is-error");
-      status.textContent = "Synced with @Toufikmahata20 · " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const sig = d.pins.map((p) => p.id).join("|");
-      if (sig !== last) { last = sig; render(d.pins); }
-    } catch (e) {
-      if (!last) {
-        wall.classList.add("is-error");
-        status.textContent = "Pins can't load right now. Open the board on Pinterest instead.";
-      }
+    for (const src of sources) {
+      try {
+        const pins = ((await src()) || []).filter((p) => p.image && p.link);
+        if (!pins.length) continue;
+        wall.classList.remove("is-error");
+        status.textContent = "Synced with @" + USER + " · " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const sig = pins.map((p) => p.id).join("|");
+        if (sig !== last) { last = sig; render(pins); }
+        return;
+      } catch (e) { /* try the next source */ }
+    }
+    if (!last) {
+      wall.classList.add("is-error");
+      status.textContent = "Pins can't load right now. Open the board on Pinterest instead.";
     }
   }
 
